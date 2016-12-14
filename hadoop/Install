@@ -1,0 +1,217 @@
+环境准备同高可用集群
+hadoop2.0已经发布了稳定版本了，增加了很多特性，比如HDFS HA、YARN等。
+
+注意：apache提供的hadoop-2.2.0的安装包是在32位操作系统编译的，因为hadoop依赖一些C++的本地库，
+所以如果在64位的操作上安装hadoop-2.2.0就需要重新在64操作系统上重新编译
+（建议第一次安装用32位的系统，我将编译好的64位的也上传到群共享里了，如果有兴趣的可以自己编译一下）
+
+前期准备就不详细说了，课堂上都介绍了
+1.修改Linux主机名
+      当前生效：  [root@localhost Desktop]# hostname master       回车     
+                         [root@master Desktop]# 
+      重启生效： 编辑：vi /etc/sysconfig/network　修改后如下：
+            NETWORKING=yes
+            HOSTNAME=master    
+            GATEWAY=192.168.0.1            Esc   ：wq保存退出
+
+        NETWORKING=yes(表示系统是否使用网络，一般设置为yes。如果设为no，则不能使用网络，而且很多系统服务程序将无法启动)
+　        HOSTNAME=centos(设置本机的主机名，这里设置的主机名要和/etc/hosts中设置的主机名对应)
+　        GATEWAY=192.168.0.1(设置本机连接的网关的IP地址。)
+
+
+2.修改IP
+             １.修改网卡配置　编辑：vi /etc/sysconfig/network-scripts/ifcfg-eth0
+
+        DEVICE=eth0 #描述网卡对应的设备别名，例如ifcfg-eth0的文件中它为eth0
+　    BOOTPROTO=static #设置网卡获得ip地址的方式，可能的选项为static，dhcp或bootp，分别对应静态指定的 ip地址，通过dhcp协议获得的ip地址，通过bootp协议获得的       ip地址
+　    BROADCAST=192.168.0.255 #对应的子网广播地址
+　    HWADDR=00:07:E9:05:E8:B4 #对应的网卡物理地址    #如果用VM克隆从机的话，此处的值会和宿主机物理地址一样，应该利用ifconfig信息手动修改其值，
+[图片]
+　    IPADDR=12.168.0.33 #如果设置网卡获得 ip地址的方式为静态指定，此字段就指定了网卡对应的ip地址
+　    NETMASK=255.255.255.0 #网卡对应的网络掩码
+　    NETWORK=192.168.0.0 #网卡对应的网络地址
+DNS1=8.8.8.8 #通常采用谷歌通用DNS解析，接入外网
+[图片]
+
+   
+         2.修改DNS 配置
+                 编辑：vi /etc/resolv.conf　修改后如下：
+                        nameserver 192.168.65.182
+
+        3.重启网络服务
+                执行命令
+                　    service network restart 　或 　 /etc/init.d/network restart
+
+            参考：http://www.cnblogs.com/coacaio/archive/2011/12/12/2284715.html
+
+3.修改主机名和IP的映射关系  vi /etc/hosts
+127.0.0.1       localhost.localdomain   localhost
+#::1    master  localhost6.localdomain6 localhost6
+        192.168.65.182  master
+        192.168.65.183  slaver1
+        192.168.65.184  slaver2
+
+
+为什么Linux中/etc/hosts文件总是被自动修改,关闭NetworkManager服务即可。
+临时关闭：
+service  NetworkManager stop
+永久关闭：
+chkconfig NetworkManager off
+在centos6.x系列Linux版本修改完/etc/hosts之后重启被修改，是由于NetworkManager服务，关闭后再修改hosts文件，重启就不会变回去了。
+
+4.关闭防火墙
+            service iptables stop
+            chkconfig iptables off
+
+  关闭selinux
+            vi /etc/sysconfig/selinux
+            SELINUX=enable   改成   SELINUX=disabled
+
+
+5.ssh免登陆
+
+
+修改每台虚拟机：vi /etc/ssh/sshd_config
+               去2行的‘#’号    #RSAAuthentication yes
+                                            #PubkeyAuthentication yes
+                如果不去掉，后面进行ssh root@192.168.65.183  cat ~/.ssh/id_rsa.pub>> authorized_keys等操作时会出现权限不够的问题
+
+
+        生成key：ssh-keygen -t rsa  一直回车
+
+进入cd /root/.ssh目录       #用什么用户登录的，就在/user_name/.ssh目录下操作
+
+cat id_rsa.pub>> authorized_keys
+ssh root@192.168.65.183  cat ~/.ssh/id_rsa.pub>> authorized_keys
+ssh root@192.168.65.184  cat ~/.ssh/id_rsa.pub>> authorized_keys
+//    cat id_rsa.pub >> known_hosts  //后期用于master自己连接自己         不需要
+scp -r /root/.ssh/authorized_keys 192.168.65.183:/root/.ssh/
+scp -r /root/.ssh/authorized_keys 192.168.65.184:/root/.ssh/
+// scp -r /root/.ssh/known_hosts  192.168.65.183:/root/.ssh/            不需要
+// scp -r /root/.ssh/known_hosts  192.168.65.184:/root/.ssh/
+
+
+
+
+
+6、master配置hadoop，并将hadoop文件传输到slave节点 
+1）解包移动
+#解压hadoop包
+tar -zxvf hadoop...
+#将安装包移到/usr目录下
+mv hadoop... /usr/hadoop
+2）新建文件夹
+#在/usr/hadoop目录下新建如下目录(root)
+mkdir /dfs
+mkdir /dfs/name
+mkdir /dfs/data
+mkdir /tmp
+3)配置文件：hadoop-env.sh(文件都在/usr/hadoop/etc/hadoop中)
+修改JAVA_HOME值（export JAVA_HOME=/usr/java）
+4)配置文件：yarn-env.sh
+修改JAVA_HOME值（export JAVA_HOME=/usr/java）
+5)配置文件：slaves
+将内容修改为：
+slave1
+slave2
+6)配置文件：core-site.xml
+<configuration>
+       <property>
+                <name>fs.defaultFS</name>
+                <value>hdfs://master:8020</value>
+       </property>
+       
+       <property>
+               <name>hadoop.tmp.dir</name>
+               <value>file:/usr/hadoop/tmp</value>
+       </property>
+</configuration>
+7)配置文件：hdfs-site.xml
+注意：如果发现机器不能够解析主机名，则在hdfs-site.xml文件下关闭主机名和IP检验，具体配置如下。还有dfs.replication的数量<=datanode节点数
+<configuration>
+       <property>
+                <name>dfs.namenode.secondary.http-address</name>
+               <value>master:9001</value>
+       </property>
+     <property>
+             <name>dfs.namenode.name.dir</name>
+             <value>file:/usr/hadoop/dfs/name</value>
+       </property>
+      <property>
+              <name>dfs.datanode.data.dir</name>
+              <value>file:/usr/hadoop/dfs/data</value>
+       </property>
+       <property>
+               <name>dfs.replication</name>
+               <value>3</value>
+        </property>
+        <property>
+                 <name>dfs.webhdfs.enabled</name>
+                  <value>true</value>
+         </property>
+
+<property>
+               <name>dfs.namenode.datanode.registration.ip-hostname-check</name>
+               <value>false</value>
+       </property>
+</configuration>
+8)配置文件：mapred-site.xml
+<configuration>
+          <property>                                                                  
+　　　　　　　　<name>mapreduce.framework.name</name>
+                <value>yarn</value>
+           </property>
+          <property>
+                  <name>mapreduce.jobhistory.address</name>
+                  <value>master:10020</value>
+          </property>
+          <property>
+                <name>mapreduce.jobhistory.webapp.address</name>
+                <value>master:19888</value>
+       </property>
+</configuration>
+9)配置文件：yarn-site.xml
+<configuration>
+        <property>
+               <name>yarn.nodemanager.aux-services</name>
+               <value>mapreduce_shuffle</value>
+        </property>
+        <property>                                                                
+<name>yarn.nodemanager.aux-services.mapreduce.shuffle.class</name>
+               <value>org.apache.hadoop.mapred.ShuffleHandler</value>
+        </property>
+        <property>
+               <name>yarn.resourcemanager.address</name>
+               <value>master:8032</value>
+       </property>
+       <property>
+               <name>yarn.resourcemanager.scheduler.address</name>
+               <value>master:8030</value>
+       </property>
+       <property>
+            <name>yarn.resourcemanager.resource-tracker.address</name>
+             <value>master:8031</value>
+      </property>
+      <property>
+              <name>yarn.resourcemanager.admin.address</name>
+               <value>master:8033</value>
+       </property>
+       <property>
+               <name>yarn.resourcemanager.webapp.address</name>
+               <value>master:8088</value>
+       </property>
+</configuration>
+10)将hadoop传输到slave1和slave2根目录
+ scp -r /usr/hadoop u0@slave1:~/
+7、配置环境变量，并启动hadoop，检查是否安装成功
+1）配置环境变量
+#root模式编辑/etc/profile
+vim /etc/profile
+#以上已经添加过java的环境变量,在后边添加就可以
+export PATH=$PATH:/usr/java/bin:/usr/java/jre/bin:/usr/hadoop/bin:/usr/hadoop/sbin
+2）启动hadoop
+#注意最后单词带‘-’
+hadoop namenode -format
+start-all.sh
+3)查看启动进程
+
